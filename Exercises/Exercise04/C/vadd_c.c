@@ -75,6 +75,11 @@ int main(int argc, char** argv)
     float*       h_b = (float*) calloc(LENGTH, sizeof(float));       // b vector
     float*       h_c = (float*) calloc(LENGTH, sizeof(float));       // c vector (a+b) returned from the compute device
 
+    float*       h_d = (float*) calloc(LENGTH, sizeof(float));       // d vector
+    float*       h_e = (float*) calloc(LENGTH, sizeof(float));       // e vector (c+d) returned from the compute device
+
+
+
     unsigned int correct;           // number of correct results
 
     size_t global;                  // global domain size
@@ -95,6 +100,7 @@ int main(int argc, char** argv)
     for(i = 0; i < count; i++){
         h_a[i] = rand() / (float)RAND_MAX;
         h_b[i] = rand() / (float)RAND_MAX;
+        h_d[i] = rand() / (float)RAND_MAX;
     }
 
     // Set up platform and GPU device
@@ -192,6 +198,34 @@ int main(int argc, char** argv)
     err = clEnqueueNDRangeKernel(commands, ko_vadd, 1, NULL, &global, NULL, 0, NULL, NULL);
     checkError(err, "Enqueueing kernel");
 
+    // Read back the results from the compute device
+    err = clEnqueueReadBuffer( commands, d_c, CL_TRUE, 0, sizeof(float) * count, h_c, 0, NULL, NULL );  
+
+
+
+    // DO IT ALL AGAIN FOR e = c + d
+    // Write c and d vectors into compute device memory  of a and b buffer
+    err = clEnqueueWriteBuffer(commands, d_a, CL_TRUE, 0, sizeof(float) * count, h_c, 0, NULL, NULL);
+    checkError(err, "Copying h_c to device at d_a");
+
+    err = clEnqueueWriteBuffer(commands, d_b, CL_TRUE, 0, sizeof(float) * count, h_d, 0, NULL, NULL);
+    checkError(err, "Copying h_d to device at d_b");
+
+    // Set the arguments to our compute kernel
+    err  = clSetKernelArg(ko_vadd, 0, sizeof(cl_mem), &d_a);
+    err |= clSetKernelArg(ko_vadd, 1, sizeof(cl_mem), &d_b);
+    err |= clSetKernelArg(ko_vadd, 2, sizeof(cl_mem), &d_c);
+    err |= clSetKernelArg(ko_vadd, 3, sizeof(unsigned int), &count);
+    checkError(err, "Setting kernel arguments");
+
+    // Execute the kernel over the entire range of our 1d input data set
+    // letting the OpenCL runtime choose the work-group size
+    global = count;
+    err = clEnqueueNDRangeKernel(commands, ko_vadd, 1, NULL, &global, NULL, 0, NULL, NULL);
+    checkError(err, "Enqueueing kernel");
+
+    // FIANLLY 
+
     // Wait for the commands to complete before stopping the timer
     err = clFinish(commands);
     checkError(err, "Waiting for kernel to finish");
@@ -200,7 +234,7 @@ int main(int argc, char** argv)
     printf("\nThe kernel ran in %lf seconds\n",rtime);
 
     // Read back the results from the compute device
-    err = clEnqueueReadBuffer( commands, d_c, CL_TRUE, 0, sizeof(float) * count, h_c, 0, NULL, NULL );  
+    err = clEnqueueReadBuffer( commands, d_c, CL_TRUE, 0, sizeof(float) * count, h_e, 0, NULL, NULL );  
     if (err != CL_SUCCESS)
     {
         printf("Error: Failed to read output array!\n%s\n", err_code(err));
@@ -213,8 +247,8 @@ int main(int argc, char** argv)
 
     for(i = 0; i < count; i++)
     {
-        tmp = h_a[i] + h_b[i];     // assign element i of a+b to tmp
-        tmp -= h_c[i];             // compute deviation of expected and output result
+        tmp = h_c[i] + h_d[i];     // assign element i of a+b to tmp
+        tmp -= h_e[i];             // compute deviation of expected and output result
         if(tmp*tmp < TOL*TOL)        // correct if square deviation is less than tolerance squared
             correct++;
         else {
@@ -223,12 +257,13 @@ int main(int argc, char** argv)
     }
 
     // summarise results
-    printf("C = A+B:  %d out of %d results were correct.\n", correct, count);
+    printf("E = C+D:  %d out of %d results were correct.\n", correct, count);
 
     // cleanup then shutdown
     clReleaseMemObject(d_a);
     clReleaseMemObject(d_b);
     clReleaseMemObject(d_c);
+
     clReleaseProgram(program);
     clReleaseKernel(ko_vadd);
     clReleaseCommandQueue(commands);

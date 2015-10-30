@@ -32,14 +32,21 @@ char * kernelsource = "__kernel void mmul(                              \n" \
 "   __global float* B,                                                  \n" \
 "   __global float* C)                                                  \n" \
 "{                                                                      \n" \
-"   int i, j, k;                                                        \n"\
-"   float tmp = 0.0f;                                                    \n"\
-"   i = get_global_id(0);                                               \n"\
-"   j = get_global_id(1);                                               \n"\
-"   for (k=0; k<N; k++){                                               \n"\
-"       tmp += A[i*N+k] * B[k*N+j];                                    \n"\
+"   int j, k;                                                        \n"\
+"   float tmp;                                                          \n"\
+"   int i = get_global_id(0);                                           \n"\
+"   float Awrk[1024];                                                   \n"\
+"   for (k=0; k<N; k++) {                                               \n"\
+"       Awrk[k] = A[i*N+k];                                             \n"\
+"   }                                                                   \n"
+"   for (j=0; j<N; j++){                                                \n"\
+"       tmp = 0.0f;                                                    \n"\
+"       for (k=0; k<N; k++){                                               \n"\
+"           float sd = Awrk[k];                                            \n"\
+"           tmp +=  (A[i*N+k] * B[k*N+j]);                                    \n"\
+"       }                                                                  \n"\
+"       C[i*N+j] += tmp;                                                   \n"\
 "   }                                                                  \n"\
-"   C[i*N+j] = tmp;                                                    \n"\
 "}                                                                      \n" \
 "\n";
 
@@ -108,19 +115,19 @@ int main(int argc, char *argv[])
 // Run sequential version on the host
 //--------------------------------------------------------------------------------
 
-    initmat(N, h_A, h_B, h_C);
+    // initmat(N, h_A, h_B, h_C);
 
-    printf("\n===== Sequential, matrix mult (dot prod), order %d on host CPU ======\n",ORDER);
-    for(int i = 0; i < COUNT; i++)
-    {
-        zero_mat(N, h_C);
-        start_time = wtime();
+    // printf("\n===== Sequential, matrix mult (dot prod), order %d on host CPU ======\n",ORDER);
+    // for(int i = 0; i < COUNT; i++)
+    // {
+    //     zero_mat(N, h_C);
+    //     start_time = wtime();
 
-        seq_mat_mul_sdot(N, h_A, h_B, h_C);
+    //     seq_mat_mul_sdot(N, h_A, h_B, h_C);
 
-        run_time  = wtime() - start_time;
-        results(N, h_C, run_time);
-    }
+    //     run_time  = wtime() - start_time;
+    //     results(N, h_C, run_time);
+    // }
 
 
 //--------------------------------------------------------------------------------
@@ -170,6 +177,8 @@ int main(int argc, char *argv[])
 
     printf("\n===== OpenCL, matrix mult, C(i,j) per work item, order %d ======\n",N);
 
+    const size_t local_size[1] = {ORDER/256};
+
     // Do the multiplication COUNT times
     for (int i = 0; i < COUNT; i++)
     {
@@ -187,12 +196,12 @@ int main(int argc, char *argv[])
         // a dot product for each element of the product matrix.  The local work
         // group size is set to NULL ... so I'm telling the OpenCL runtime to
         // figure out a local work group size for me.
-        const size_t global[2] = {N, N};
+        const size_t global[1] = {N};
         err = clEnqueueNDRangeKernel(
             commands,
             kernel,
-            2, NULL,
-            global, NULL,
+            1, NULL,
+            global, local_size,
             0, NULL, NULL);
 
         checkError(err, "Enqueuing kernel");
